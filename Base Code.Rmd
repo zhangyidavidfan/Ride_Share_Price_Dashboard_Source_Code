@@ -1,0 +1,251 @@
+---
+title: "Ride Share Base Code"
+author: "David Fan"
+date: "5/15/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Motivation
+
+Ride Sharing Economy is an interesting one that deeply tied in our lives today.
+
+My Goal is two fold; On a utility perspective, I would want to build a model that can help people better estimate how much commuting expense they'll use through ride share services. On an exploration perpspective I am also quite interested in seeing what are the most significant factors the model considered when making the price prediction.
+
+# Code Proper
+
+This Document contains the code for the data aggregation and modelling
+Data Source:
+https://data.cityofchicago.org/Transportation/Transportation-Network-Providers-Trips/m6dm-c72p/data
+https://www.wunderground.com/history/daily/us/il/chicago/KMDW/date/2019-5-7?cm_ven=localwx_history
+http://www.robparal.com/ChicagoCommunityAreaData.html
+https://www2.illinois.gov/cms/personnel/employeeresources/pages/stateholidays.aspx
+
+```{r results='hide', message=FALSE, warning=FALSE}
+#Load Library
+library(readr)
+library(dplyr)
+library(chron)
+library(stringr)
+library(ggplot2)
+setwd('C:/Users/fzy20/Downloads')
+
+#Load Datasets
+trips = read_csv("Transportation_Network_Providers_-_Trips.csv")
+holiday = read_csv("C:/Users/fzy20/Documents/Penn/Chicago Holidays.csv")
+areaInfo = read_csv("C:/Users/fzy20/Documents/Penn/CommAreaInfo.csv")
+areaCode = read_csv("C:/Users/fzy20/Downloads/CommAreas.csv")
+weather = read_csv("C:/Users/fzy20/Documents/Penn/Weather Chicago.csv")
+
+#Clean Data, drop data without proper location reference
+trips_cleaned = trips[!is.na(trips$`Pickup Centroid Location`),]
+trips_cleaned = trips_cleaned[!is.na(trips_cleaned$`Dropoff Centroid Location`),]
+
+
+#Sample Data for analysis due to computational constraint
+trips_selected = trips_cleaned[sample(1:nrow(trips_cleaned),size = 500000),]
+
+#Pick relevant area information
+areaInfo = areaInfo[,c(1:7)]
+
+#Feature Engineer the Date and the Time
+trips_selected$Start_Date = sapply(trips_selected$`Trip Start Timestamp`,function(x) return(strsplit(x, " ")[[1]][1]))
+trips_selected$Start_Time = sapply(trips_selected$`Trip Start Timestamp`,function(x) return(strsplit(x, " ")[[1]][2]))
+trips_selected$Start_AM_PM = sapply(trips_selected$`Trip Start Timestamp`,function(x) return(strsplit(x, " ")[[1]][3]))
+trips_selected$End_Date = sapply(trips_selected$`Trip End Timestamp`,function(x) return(strsplit(x, " ")[[1]][1]))
+trips_selected$End_Time = sapply(trips_selected$`Trip End Timestamp`,function(x) return(strsplit(x, " ")[[1]][2]))
+trips_selected$End_AM_PM = sapply(trips_selected$`Trip End Timestamp`,function(x) return(strsplit(x, " ")[[1]][3]))
+trips_selected$Start_Date = as.Date(trips_selected$Start_Date, format = "%m/%d/%Y")
+trips_selected$End_Date = as.Date(trips_selected$End_Date, format = "%m/%d/%Y")
+head(trips_selected)
+```
+
+```{r message=FALSE}
+#clean holiday datasets
+holiday$`2018` = sapply(holiday$`2018`,function(x) return(paste(strsplit(x, ",")[[1]][2]," 2018")))
+holiday$`2019` = sapply(holiday$`2019`,function(x) return(paste(strsplit(x, ",")[[1]][2]," 2019")))
+
+#Change the vairable type to a date variable
+holiday$`2018` = as.Date(holiday$`2018`,format = " %B %d %Y")
+holiday$`2019` = as.Date(holiday$`2019`,format = " %B %d %Y")
+
+#Concatenate the columns
+holiday_1 = holiday[,c(1,2)]
+holiday_2 = holiday[,c(1,3)]
+
+#Rename Columns
+colnames(holiday_1) = c("holiday","Date")
+colnames(holiday_2) = c("holiday","Date")
+
+#Put together the columns
+holiday = rbind(holiday_1,holiday_2)
+holiday$is_holiday = 1
+head(holiday)
+```
+
+```{r}
+#Reframed weather data
+weather$Date = as.Date(weather$Date, format = "%m/%d/%Y")
+#Merge Weather and Holiday
+weather_holiday = merge(weather, holiday, by.x = "Date",by.y = "Date", all.x = TRUE)
+head(weather_holiday)
+```
+
+```{r}
+#Merge area informations
+area_complete = merge(areaCode, areaInfo, by = c("Area Number","Name"))
+head(area_complete)
+```
+
+```{r}
+#Merging Relevant datasets
+trips_with_weather_holiday = merge(trips_selected, weather_holiday, by.x = 'Start_Date', by.y = 'Date', all.x = TRUE)
+trip_final = merge(trips_with_weather_holiday, area_complete, by.x = "Pickup Community Area", by.y = "Area Number")
+trip_final[is.na(trip_final$is_holiday),'is_holiday'] = 0
+#Display final datasets
+head(trip_final)
+```
+
+```{r}
+#Unselect columns that will not aid the pre-ride insights and predictive model
+trip_final_tuned = trip_final %>% select(-c("Trip Start Timestamp","Trip End Timestamp","Dropoff Centroid Location",
+                         "Pickup Centroid Location","Shared Trip Authorized","Trip ID", "Pickup Census Tract", "Dropoff Census Tract"))
+#Add additional month and weekday feature
+trip_final_tuned$Month = months(trip_final_tuned$Start_Date)
+trip_final_tuned$Weekdays = weekdays(trip_final_tuned$Start_Date)
+#reformat the median Household Income Variable
+trip_final_tuned$Median_Household_Income = sapply(trip_final_tuned$Median_Household_Income, function(x) gsub("\\$|,","",x))
+trip_final_tuned$Median_Household_Income = as.integer(trip_final_tuned$Median_Household_Income)
+#convert feature to time
+trip_final_tuned$Start_Time <- chron(times=trip_final_tuned$Start_Time)
+head(trip_final_tuned)
+```
+
+```{r}
+colnames(trip_final_tuned)
+```
+
+```{r}
+#Create distance variable
+trip_final_tuned$distance = sqrt((trip_final_tuned$`Pickup Centroid Longitude`- trip_final_tuned$`Dropoff Centroid Longitude`)^2 + (trip_final_tuned$`Pickup Centroid Latitude`- trip_final_tuned$`Dropoff Centroid Latitude`)^2)
+#remove observations that has no time or fare
+trip_final_tuned = trip_final_tuned[!is.na(trip_final_tuned$Fare),]
+trip_final_tuned = trip_final_tuned[!is.na(trip_final_tuned$`Trip Seconds`),]
+
+#Reconstruct column name to aid data training
+names(trip_final_tuned)<-str_replace_all(names(trip_final_tuned), c(" " = "" , "," = "","-" = "_" ))
+trip_final_tuned=trip_final_tuned %>% mutate_if(is.character, as.factor)
+trip_final = trip_final_tuned[!is.na(trip_final_tuned$Fare),]
+head(trip_final)
+```
+# Selected Visuals
+```{r message = FALSE}
+ggplot(data = trip_final, aes(x = ordered(Weekdays, levels=c("Monday", "Tuesday", "Wednesday", "Thursday", 
+"Friday", "Saturday", "Sunday")), y = Fare)) + geom_col() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+
+```{r message = FALSE}
+ggplot(data = trip_final[trip_final$Start_AM_PM == "AM",], aes(x =factor(Start_Time), y = Fare)) + geom_col() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+```{r}
+ggplot(data = trip_final[trip_final$Start_AM_PM == "PM",], aes(x =factor(Start_Time), y = Fare)) + geom_col() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+ggplot(data = trip_final, aes(x =Start_AM_PM, y = Fare)) + geom_col() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+```{r}
+#interesting
+ggplot(data = trip_final, aes(x =distance, y = Fare)) + geom_point() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + geom_smooth(method = "lm")
+```
+```{r}
+ggplot(data = trip_final, aes(x =AvgTemp, y = Fare)) + geom_col() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+ggplot(data = trip_final[trip_final$Start_AM_PM == "AM",], aes(x = Median_Household_Income, y = Fare)) + geom_point() + theme(axis.text.x = element_text(angle = 90, hjust = 1))+ geom_smooth(method = "lm")
+```
+
+```{r}
+#train-test split
+index = sample(1:nrow(trip_final_tuned), 50000)
+train = trip_final_tuned[-index,]
+test = trip_final_tuned[index,]
+```
+
+```{r}
+#Train LM Model on Fare
+prelim_model = lm(Fare~TripsPooled + Start_Time + Start_AM_PM + AvgTemp + MaxWindSpeed + MaxHumidity + AvgPrecipation + is_holiday + Population + Median_Household_Income + Pop_Below_Poverty + Owner_Occupied + Renter_Occupied_House + distance + Weekdays, data = train)
+```
+
+```{r}
+#Train LM Model on Time
+prelim_model_time = lm(TripSeconds~TripsPooled + Start_Time + Start_AM_PM + AvgTemp + MaxWindSpeed + MaxHumidity + AvgPrecipation + is_holiday + Population + Median_Household_Income + Pop_Below_Poverty + Owner_Occupied + Renter_Occupied_House + distance + Weekdays, data = train)
+```
+
+
+```{r}
+#View model summary Fare
+summary(prelim_model)
+```
+
+```{r}
+#View Model Summary Time
+summary(prelim_model_time)
+```
+
+```{r}
+#Accuracy Report
+score = predict(prelim_model, test)
+print(paste("price error: ",sqrt(mean((score - test$Fare)^2))))
+time = predict(prelim_model_time, test)
+print(paste("price error: ", sqrt(mean((time - test$TripSeconds)^2))))
+```
+
+```{r}
+library(rpart)
+#Train Rpart Model on Fare
+tree_model_1 = rpart(Fare~TripsPooled + Start_Time + Start_AM_PM + AvgTemp + MaxWindSpeed + MaxHumidity + AvgPrecipation + is_holiday + Population + Median_Household_Income + Pop_Below_Poverty + Owner_Occupied + Renter_Occupied_House + distance + Weekdays + Month, data = train,control =list(maxdepth = 1))
+tree_model_5 = rpart(Fare~TripsPooled + Start_Time + Start_AM_PM + AvgTemp + MaxWindSpeed + MaxHumidity + AvgPrecipation + is_holiday + Population + Median_Household_Income + Pop_Below_Poverty + Owner_Occupied + Renter_Occupied_House + distance + Weekdays + Month, data = train,control =list(maxdepth = 5))
+tree_model_10 = rpart(Fare~TripsPooled + Start_Time + Start_AM_PM + AvgTemp + MaxWindSpeed + MaxHumidity + AvgPrecipation + is_holiday + Population + Median_Household_Income + Pop_Below_Poverty + Owner_Occupied + Renter_Occupied_House + distance + Weekdays + Month, data = train,control =list(maxdepth = 10))
+```
+
+```{r}
+#Train Rpart Model on Time
+tree_model_time_1 = rpart(TripSeconds~TripsPooled + Start_Time + Start_AM_PM + AvgTemp + MaxWindSpeed + MaxHumidity + AvgPrecipation + is_holiday + Population + Median_Household_Income + Pop_Below_Poverty + Owner_Occupied + Renter_Occupied_House + distance + Weekdays + Month, data = train,control =list(maxdepth = 1))
+tree_model_time_5 = rpart(TripSeconds~TripsPooled + Start_Time + Start_AM_PM + AvgTemp + MaxWindSpeed + MaxHumidity + AvgPrecipation + is_holiday + Population + Median_Household_Income + Pop_Below_Poverty + Owner_Occupied + Renter_Occupied_House + distance + Weekdays + Month, data = train,control =list(maxdepth = 5))
+tree_model_time_10 = rpart(TripSeconds~TripsPooled + Start_Time + Start_AM_PM + AvgTemp + MaxWindSpeed + MaxHumidity + AvgPrecipation + is_holiday + Population + Median_Household_Income + Pop_Below_Poverty + Owner_Occupied + Renter_Occupied_House + distance + Weekdays + Month, data = train,control =list(maxdepth = 10))
+```
+
+```{r}
+#accuracy
+score = predict(tree_model_1, test)
+print(paste("maxdepth = 1, price error: ",sqrt(mean((score - test$Fare)^2))))
+score = predict(tree_model_5, test)
+print(paste("maxdepth =5, price error: ",sqrt(mean((score - test$Fare)^2))))
+score = predict(tree_model_10, test)
+print(paste("maxdepth = 10, price error: ",sqrt(mean((score - test$Fare)^2))))
+time = predict(tree_model_time_1, test)
+print(paste("maxdepth = 1, time error: ",sqrt(mean((time - test$TripSeconds)^2))))
+time = predict(tree_model_time_5, test)
+print(paste("maxdepth = 5, time error: ",sqrt(mean((time - test$TripSeconds)^2))))
+time = predict(tree_model_time_10, test)
+print(paste("maxdepth = 10, time error: ",sqrt(mean((time - test$TripSeconds)^2))))
+```
+
+```{r}
+#Pick better model = LM
+save(prelim_model, file = "price_model.rda")
+save(prelim_model_time, file = "time_model.rda")
+```
+
+```{r}
+#generate additional datasets to be used for dashboard
+Community_location_df = trip_final_tuned %>% group_by(Name) %>% dplyr::summarize(Area_num = mean(`PickupCommunityArea`),latitude = mean(`PickupCentroidLatitude`),
+                                                    longitude = mean(`PickupCentroidLongitude`))
+```
+
