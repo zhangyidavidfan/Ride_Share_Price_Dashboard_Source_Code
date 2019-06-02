@@ -137,7 +137,6 @@ trip_final_tuned = trip_final_tuned[!is.na(trip_final_tuned$`Trip Seconds`),]
 
 #Reconstruct column name to aid data training
 names(trip_final_tuned)<-str_replace_all(names(trip_final_tuned), c(" " = "" , "," = "","-" = "_" ))
-trip_final_tuned=trip_final_tuned %>% mutate_if(is.character, as.factor)
 trip_final = trip_final_tuned[!is.na(trip_final_tuned$Fare),]
 head(trip_final)
 ```
@@ -166,8 +165,19 @@ ggplot(data = trip_final, aes(x =distance, y = Fare)) + geom_point() + theme(axi
 ggplot(data = trip_final, aes(x =AvgTemp, y = Fare)) + geom_col() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
 
+
 ```{r}
 ggplot(data = trip_final[trip_final$Start_AM_PM == "AM",], aes(x = Median_Household_Income, y = Fare)) + geom_point() + theme(axis.text.x = element_text(angle = 90, hjust = 1))+ geom_smooth(method = "lm")
+```
+
+```{r}
+trip_final_tuned[trip_final_tuned$Start_Time < chron(times ="6:00:00"),"Start_AM_PM"] = sapply(trip_final_tuned[trip_final_tuned$Start_Time < chron(times ="6:00:00"),"Start_AM_PM"], function(x) paste(x,"early")) 
+trip_final_tuned[trip_final_tuned$Start_Time >= chron(times ="6:00:00"),"Start_AM_PM"] = sapply(trip_final_tuned[trip_final_tuned$Start_Time >= chron(times ="6:00:00"),"Start_AM_PM"], function(x) paste(x,"late")) 
+```
+
+```{r}
+trip_final_tuned=trip_final_tuned %>% mutate_if(is.character, as.factor)
+head(trip_final_tuned)
 ```
 
 ```{r}
@@ -179,12 +189,12 @@ test = trip_final_tuned[index,]
 
 ```{r}
 #Train LM Model on Fare
-prelim_model = lm(Fare~TripsPooled + Start_Time + Start_AM_PM + AvgTemp + MaxWindSpeed + MaxHumidity + AvgPrecipation + is_holiday + Population + Median_Household_Income + Pop_Below_Poverty + Owner_Occupied + Renter_Occupied_House + distance + Weekdays, data = train)
+prelim_model = lm(Fare~TripsPooled + Start_AM_PM + AvgTemp + MaxWindSpeed + MaxHumidity + AvgPrecipation + is_holiday + Population + Median_Household_Income + Pop_Below_Poverty + Owner_Occupied + Renter_Occupied_House + distance + Weekdays, data = train)
 ```
 
 ```{r}
 #Train LM Model on Time
-prelim_model_time = lm(TripSeconds~TripsPooled + Start_Time + Start_AM_PM + AvgTemp + MaxWindSpeed + MaxHumidity + AvgPrecipation + is_holiday + Population + Median_Household_Income + Pop_Below_Poverty + Owner_Occupied + Renter_Occupied_House + distance + Weekdays, data = train)
+prelim_model_time = lm(TripSeconds~TripsPooled + Start_AM_PM + AvgTemp + MaxWindSpeed + MaxHumidity + AvgPrecipation + is_holiday + Population + Median_Household_Income + Pop_Below_Poverty + Owner_Occupied + Renter_Occupied_House + distance + Weekdays, data = train)
 ```
 
 
