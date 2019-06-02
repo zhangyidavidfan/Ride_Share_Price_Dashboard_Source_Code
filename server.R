@@ -147,6 +147,10 @@ server <- shinyServer(function(input, output,session) {
                       "is_holiday" = date_f(input$date) %in% holiday$Date,
                       "Month" = months(date_f(input$date)),
                       "Weekdays" = weekdays(date_f(input$date)))
+    prep$Start_AM_PM = as.character(prep$Start_AM_PM)
+    prep[prep$Start_Time < chron(times ="6:00:00"),"Start_AM_PM"] = sapply(prep[prep$Start_Time < chron(times ="6:00:00"),"Start_AM_PM"], function(x) paste(x,"early")) 
+    prep[prep$Start_Time >= chron(times ="6:00:00"),"Start_AM_PM"] = sapply(prep[prep$Start_Time >= chron(times ="6:00:00"),"Start_AM_PM"], function(x) paste(x,"late")) 
+    prep$Start_AM_PM = as.factor(prep$Start_AM_PM)
     part = areaInfo[areaInfo$Name == input$comm_area_start,]
     part = part[,3:7] %>% mutate_all(numeric_f)
     final = cbind(part, prep)
